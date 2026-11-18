@@ -1,0 +1,23 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe sites
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          i=0
+          for u in "https://www.agora.co.il/" "https://www.agora.co.il/toGet.asp" "https://www.agora.co.il/rss.asp" "https://www.yad2.co.il/products/all?price=0-0" "https://gw.yad2.co.il/feed-search-legacy/products/all?price=0-0"; do
+            i=$((i+1)); f=p$i.html
+            code=$(curl -sSL -A "$UA" -o "$f" -w "%{http_code} %{content_type} %{url_effective}" "$u" || echo FAIL)
+            echo "=== $f $u -> $code size=$(wc -c <"$f" 2>/dev/null)"
+          done
+          for f in p*.html; do
+            echo "##### FILE $f"
+            cs=$(grep -aio 'charset=[a-z0-9-]*' "$f" | head -1 | cut -d= -f2)
+            echo "charset=$cs"
+            if [ -n "$cs" ] && [ "${cs,,}" != "utf-8" ]; then iconv -f "$cs" -t utf-8 "$f" > u.txt 2>/dev/null || cp "$f" u.txt; else cp "$f" u.txt; fi
+            echo "--- links:"; grep -aoE 'href="[^"]*"' u.txt | sort | uniq -c | sort -rn | head -60
+            echo "--- body sample:"; tr -s ' \t\r\n' ' ' < u.txt | head -c 12000; echo
+          done
