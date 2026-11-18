@@ -11,6 +11,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -21,10 +22,18 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
-def fetch(url, data=None, timeout=30):
-    req = urllib.request.Request(url, data=data, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", errors="replace")
+def fetch(url, data=None, timeout=30, tries=3):
+    for n in range(tries):
+        try:
+            req = urllib.request.Request(url, data=data, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError:
+            raise
+        except Exception:  # noqa: BLE001  (תקלת רשת רגעית — מנסים שוב)
+            if n == tries - 1:
+                raise
+            time.sleep(3 * (n + 1))
 
 
 def norm(s):
