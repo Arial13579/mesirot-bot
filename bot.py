@@ -41,7 +41,7 @@ def norm(s):
     s = html.unescape(s or "")
     s = re.sub(r"[\"'׳״`\-–_.,()/]", " ", s)
     s = s.replace("וו", "ו").replace("יי", "י")
-    return " " + re.sub(r"\s+", " ", s).strip() + " "
+    return " " + re.sub(r"\s+", " ", s).strip().lower() + " "
 
 
 # ---------- אגורה ----------
@@ -198,6 +198,14 @@ def send(token, chat, text, silent=False):
 
 GENERIC = {"name": "למסירה", "emoji": "📦"}
 
+
+def is_deal(cfg, it, text):
+    """מציאה = חפץ כמו חדש, או חפץ ששווה הרבה (מותג, חשמל יקר, חדש באריזה)."""
+    d = cfg.get("deals", {})
+    if it.get("condition") in d.get("conditions", []):
+        return True
+    return has_any(text, d.get("words", []))
+
 def main():
     cfg = json.load(open(CONFIG, encoding="utf-8"))
     state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
@@ -270,7 +278,9 @@ def main():
         if sent >= cfg.get("max_per_run", 10):
             break  # השאר יישלחו בריצה הבאה
         d = dims(desc)
+        deal = is_deal(cfg, it, text)
         lines = [
+            *(["💎 <b>מציאה!</b>"] if deal else []),
             (f"⭐ {rule.get('emoji', '📦')} <b>{html.escape(rule['name'])}</b> ⭐" if rule is not GENERIC
              else f"{rule.get('emoji', '📦')} {html.escape(rule['name'])}"),
             f"<b>{html.escape(it['title'])}</b>",
@@ -283,7 +293,7 @@ def main():
             short = desc if len(desc) <= 300 else desc[:300] + "…"
             lines.append(f"<i>{html.escape(short)}</i>")
         lines.append(f'<a href="{it["url"]}">פתיחת המודעה באגורה</a>')
-        if [c for c in chats if send(token, c, "\n".join(lines), silent=rule is GENERIC)]:
+        if [c for c in chats if send(token, c, "\n".join(lines), silent=(rule is GENERIC and not deal))]:
             sent += 1
             seen.append(it["id"]); seen_set.add(it["id"])
         time.sleep(1)
