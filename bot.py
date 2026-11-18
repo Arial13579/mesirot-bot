@@ -161,10 +161,11 @@ def find_chat(token):
     return None
 
 
-def send(token, chat, text):
+def send(token, chat, text, silent=False):
     try:
         tg(token, "sendMessage", chat_id=chat, text=text, parse_mode="HTML",
-           disable_web_page_preview="false")
+           disable_web_page_preview="false",
+           disable_notification="true" if silent else "false")
         return True
     except Exception as e:  # noqa: BLE001
         print("! שליחה לטלגרם נכשלה:", e)
@@ -246,7 +247,8 @@ def main():
             break  # השאר יישלחו בריצה הבאה
         d = dims(desc)
         lines = [
-            f"{rule.get('emoji', '📦')} <b>{html.escape(rule['name'])}</b>",
+            (f"⭐ {rule.get('emoji', '📦')} <b>{html.escape(rule['name'])}</b> ⭐" if rule is not GENERIC
+             else f"{rule.get('emoji', '📦')} {html.escape(rule['name'])}"),
             f"<b>{html.escape(it['title'])}</b>",
             f"📍 {html.escape(it['area'])}" + (f" · {html.escape(it['condition'])}" if it["condition"] else ""),
         ]
@@ -257,7 +259,7 @@ def main():
             short = desc if len(desc) <= 300 else desc[:300] + "…"
             lines.append(f"<i>{html.escape(short)}</i>")
         lines.append(f'<a href="{it["url"]}">פתיחת המודעה באגורה</a>')
-        if send(token, chat, "\n".join(lines)):
+        if send(token, chat, "\n".join(lines), silent=rule is GENERIC):
             sent += 1
             seen.append(it["id"]); seen_set.add(it["id"])
         time.sleep(1)
