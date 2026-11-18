@@ -173,6 +173,8 @@ def send(token, chat, text):
 
 # ---------- ריצה ----------
 
+GENERIC = {"name": "למסירה", "emoji": "📦"}
+
 def main():
     cfg = json.load(open(CONFIG, encoding="utf-8"))
     state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
@@ -221,7 +223,9 @@ def main():
         title = norm(it["title"])
         # בדיקה ראשונה לפי כותרת, כדי לא לפתוח כל מודעה
         maybe = [r for r in cfg["items"] if has_any(title, r["title"])]
-        if not in_area or not maybe:
+        send_all = cfg.get("send_all", False)
+        skip = has_any(title, cfg.get("never", []))
+        if not in_area or skip or (not maybe and not send_all):
             if token and chat:
                 seen.append(it["id"]); seen_set.add(it["id"])
             continue
@@ -229,6 +233,8 @@ def main():
         desc = item_description(it["url"])
         text = norm(it["title"] + " " + desc)
         rule = next((r for r in maybe if match(r, text)), None)
+        if not rule and send_all:
+            rule = GENERIC
         if not rule:
             if token and chat:
                 seen.append(it["id"]); seen_set.add(it["id"])
