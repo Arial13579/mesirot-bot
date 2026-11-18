@@ -175,6 +175,11 @@ def main():
     if not token:
         print("חסר TELEGRAM_TOKEN (Settings ← Secrets and variables ← Actions). לא שולח כלום.")
     elif not chat:
+        try:
+            me = tg(token, "getMe").get("result", {})
+            print(f"הבוט המחובר: @{me.get('username')} ({me.get('first_name')})")
+        except Exception as e:  # noqa: BLE001
+            print("! המפתח של הבוט לא תקין:", e)
         chat = find_chat(token)
         if chat:
             state["chat_id"] = chat
