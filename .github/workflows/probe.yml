@@ -16,7 +16,4 @@ jobs:
           curl -sSL -A "$UA" -o amp.html "https://www.agora.co.il/toGetAMP.asp?dealType=1"
           curl -sSL -A "$UA" -o yad2.html "https://www.yad2.co.il/products/all?price=0-0"
           ls -la
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pages
-          path: out
+          for f in *.html; do echo "BEGIN $f"; gzip -9c $f | base64 -w 0; echo; echo "END $f"; done
