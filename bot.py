@@ -147,18 +147,40 @@ def tg(token, method, **params):
     return json.loads(fetch(f"https://api.telegram.org/bot{token}/{method}", data=data))
 
 
-def find_chat(token):
+WELCOME = ("✅ <b>בוט המסירות מחובר!</b>\n"
+           "מעכשיו תקבל/י כאן התראה על כל מודעה מתאימה באגורה.\n"
+           "כדי להפסיק לקבל הודעות שולחים /stop")
+
+
+def update_chats(token, state, join_code):
+    """מוסיף מי שלחץ Start בקישור ההצטרפות, ומסיר מי ששלח /stop."""
+    chats = state.setdefault("chats", [])
     try:
-        res = tg(token, "getUpdates")
+        res = tg(token, "getUpdates", offset=state.get("tg_offset", 0), timeout=0)
     except Exception as e:  # noqa: BLE001
         print("! getUpdates נכשל:", e)
-        return None
-    for upd in reversed(res.get("result", [])):
-        msg = upd.get("message") or upd.get("edited_message") or {}
+        return
+    for upd in res.get("result", []):
+        state["tg_offset"] = upd["update_id"] + 1
+        msg = upd.get("message") or {}
         chat = msg.get("chat") or {}
-        if chat.get("id"):
-            return str(chat["id"])
-    return None
+        cid = str(chat.get("id", ""))
+        text = (msg.get("text") or "").strip()
+        if not cid or chat.get("type") != "private":
+            continue
+        who = chat.get("first_name") or cid
+        if text.startswith("/stop") and cid in chats:
+            chats.remove(cid)
+            send(token, cid, "👋 הפסקת לקבל הודעות. כדי לחזור, לוחצים שוב על קישור ההצטרפות.")
+            print("הוסר מנוי:", who)
+        elif text.startswith("/start") and cid not in chats:
+            # הראשון מצטרף בלי קוד; כל השאר רק דרך קישור ההצטרפות
+            if not chats or (join_code and join_code in text):
+                chats.append(cid)
+                send(token, cid, WELCOME)
+                print("נוסף מנוי:", who)
+            else:
+                send(token, cid, "🔒 הבוט פרטי. כדי להצטרף צריך את קישור ההצטרפות מבעל הבוט.")
 
 
 def send(token, chat, text, silent=False):
@@ -183,21 +205,23 @@ def main():
     seen_set = set(seen)
 
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or state.get("chat_id")
+    chats = state.setdefault("chats", [])
+    if state.get("chat_id") and state["chat_id"] not in chats:
+        chats.append(state.pop("chat_id"))
+    env_chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if env_chat and env_chat not in chats:
+        chats.append(env_chat)
     if not token:
         print("חסר TELEGRAM_TOKEN (Settings ← Secrets and variables ← Actions). לא שולח כלום.")
-    elif not chat:
+    else:
         try:
             me = tg(token, "getMe").get("result", {})
-            print(f"הבוט המחובר: @{me.get('username')} ({me.get('first_name')})")
+            print(f"הבוט המחובר: @{me.get('username')} · מנויים: {len(chats)}")
         except Exception as e:  # noqa: BLE001
             print("! המפתח של הבוט לא תקין:", e)
-        chat = find_chat(token)
-        if chat:
-            state["chat_id"] = chat
-            send(token, chat, "✅ <b>בוט המסירות מחובר!</b>\nמעכשיו תקבל כאן התראה על כל מודעה מתאימה באגורה.")
-        else:
-            print("עוד לא נמצא צ'אט. צריך לפתוח את הבוט בטלגרם וללחוץ Start.")
+        update_chats(token, state, cfg.get("join_code", ""))
+        print(f"מנויים אחרי עדכון: {len(chats)}")
+    chat = bool(chats)
 
     towns = [norm(t) for t in cfg["towns"]]
     found = []
@@ -259,7 +283,7 @@ def main():
             short = desc if len(desc) <= 300 else desc[:300] + "…"
             lines.append(f"<i>{html.escape(short)}</i>")
         lines.append(f'<a href="{it["url"]}">פתיחת המודעה באגורה</a>')
-        if send(token, chat, "\n".join(lines), silent=rule is GENERIC):
+        if [c for c in chats if send(token, c, "\n".join(lines), silent=rule is GENERIC)]:
             sent += 1
             seen.append(it["id"]); seen_set.add(it["id"])
         time.sleep(1)
