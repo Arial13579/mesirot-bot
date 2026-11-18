@@ -214,7 +214,7 @@ def main():
         time.sleep(1)
         desc = item_description(it["url"])
         text = norm(it["title"] + " " + desc)
-        rule = next((r for r in cfg["items"] if match(r, text)), None)
+        rule = next((r for r in maybe if match(r, text)), None)
         if not rule:
             if token and chat:
                 seen.append(it["id"]); seen_set.add(it["id"])
