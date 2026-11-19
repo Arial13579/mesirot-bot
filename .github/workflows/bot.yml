@@ -1,9 +1,9 @@
 name: mesirot-bot
-# ריצה ארוכה: בודקת כל 10 דקות במשך כמעט 6 שעות, ואז מפעילה את עצמה מחדש.
+# כל ריצה: בדיקה אחת, שמירה, המתנה של 10 דקות, ואז מפעילה את הריצה הבאה.
 # התזמון של GitHub נשאר כגיבוי, למקרה שהשרשרת נעצרת.
 on:
   schedule:
-    - cron: "8 */2 * * *"
+    - cron: "8 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
@@ -14,30 +14,30 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 358
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Check Agora every 10 minutes and notify Telegram
+      - name: Check Agora and notify Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 bot.py
+      - name: Save seen ads
         run: |
           git config user.name "mesirot-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          end=$(( $(date +%s) + 340*60 ))
-          while :; do
-            python3 bot.py || echo "! הריצה נכשלה, ממשיכים"
-            git add -A state.json state.enc 2>/dev/null || true
-            if ! git diff --cached --quiet; then
-              git commit -qm "עדכון מודעות שנבדקו"
-              git pull -q --rebase origin main || true
-              git push -q || echo "! השמירה נכשלה"
-            fi
-            [ $(( $(date +%s) + 600 )) -lt $end ] || break
-            sleep 600
+          git add -A state.json state.enc 2>/dev/null || true
+          git diff --cached --quiet && exit 0
+          git commit -qm "עדכון מודעות שנבדקו"
+          for i in 1 2 3; do
+            git push -q && exit 0
+            git pull -q --rebase -X theirs origin main || git rebase --abort
           done
-      - name: Start the next run
-        if: ${{ !cancelled() }}
+          echo "! השמירה נכשלה"; exit 1
+      - name: Wait 10 minutes and start the next run
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch') }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bot.yml --ref main --repo "$GITHUB_REPOSITORY"
+        run: |
+          sleep 540
+          gh workflow run bot.yml --ref main --repo "$GITHUB_REPOSITORY"
