@@ -1,27 +1,43 @@
 name: mesirot-bot
+# ריצה ארוכה: בודקת כל 10 דקות במשך כמעט 6 שעות, ואז מפעילה את עצמה מחדש.
+# התזמון של GitHub נשאר כגיבוי, למקרה שהשרשרת נעצרת.
 on:
   schedule:
-    - cron: "8,38 * * * *"
+    - cron: "8 */2 * * *"
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: mesirot-bot
   cancel-in-progress: false
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 358
     steps:
       - uses: actions/checkout@v4
-      - name: Check Agora and notify Telegram
+      - name: Check Agora every 10 minutes and notify Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 bot.py
-      - name: Save seen ads
         run: |
           git config user.name "mesirot-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          git diff --cached --quiet || (git commit -qm "עדכון מודעות שנבדקו" && git push -q)
+          end=$(( $(date +%s) + 340*60 ))
+          while :; do
+            python3 bot.py || echo "! הריצה נכשלה, ממשיכים"
+            git add -A state.json state.enc 2>/dev/null || true
+            if ! git diff --cached --quiet; then
+              git commit -qm "עדכון מודעות שנבדקו"
+              git pull -q --rebase origin main || true
+              git push -q || echo "! השמירה נכשלה"
+            fi
+            [ $(( $(date +%s) + 600 )) -lt $end ] || break
+            sleep 600
+          done
+      - name: Start the next run
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run bot.yml --ref main --repo "$GITHUB_REPOSITORY"

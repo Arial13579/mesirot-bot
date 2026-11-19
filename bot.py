@@ -4,6 +4,9 @@
 רץ ב-GitHub Actions כל 15 דקות. ההגדרות (ערים, פריטים, מידות) ב-config.json.
 המודעות שכבר נבדקו נשמרות ב-state.json כדי שלא תקבל אותה מודעה פעמיים.
 """
+import base64
+import hashlib
+import hmac
 import html
 import json
 import os
@@ -16,7 +19,8 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(ROOT, "config.json")
-STATE = os.path.join(ROOT, "state.json")
+STATE = os.path.join(ROOT, "state.json")      # ישן, לא מוצפן (עובר המרה)
+STATE_ENC = os.path.join(ROOT, "state.enc")   # מוצפן במפתח של הבוט — ה-repository ציבורי
 BASE = "https://www.agora.co.il"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -149,10 +153,11 @@ def tg(token, method, **params):
 
 WELCOME = ("✅ <b>בוט המסירות מחובר!</b>\n"
            "מעכשיו תקבל/י כאן התראה על כל מודעה מתאימה באגורה.\n"
-           "כדי להפסיק לקבל הודעות שולחים /stop")
+           "כדי להפסיק לקבל הודעות שולחים /stop\n"
+           "כדי לקבל קישור הצטרפות למישהו נוסף שולחים /link")
 
 
-def update_chats(token, state, join_code):
+def update_chats(token, state, join_code, username=""):
     """מוסיף מי שלחץ Start בקישור ההצטרפות, ומסיר מי ששלח /stop."""
     chats = state.setdefault("chats", [])
     try:
@@ -169,16 +174,19 @@ def update_chats(token, state, join_code):
         if not cid or chat.get("type") != "private":
             continue
         who = chat.get("first_name") or cid
-        if text.startswith("/stop") and cid in chats:
+        if text.startswith("/link") and cid in chats:
+            send(token, cid, "🔗 קישור הצטרפות לבוט (לשלוח רק למי שרוצים שיקבל את ההודעות):\n"
+                             f"https://t.me/{username}?start={join_code}")
+        elif text.startswith("/stop") and cid in chats:
             chats.remove(cid)
             send(token, cid, "👋 הפסקת לקבל הודעות. כדי לחזור, לוחצים שוב על קישור ההצטרפות.")
-            print("הוסר מנוי:", who)
+            print("הוסר מנוי")
         elif text.startswith("/start") and cid not in chats:
             # הראשון מצטרף בלי קוד; כל השאר רק דרך קישור ההצטרפות
             if not chats or (join_code and join_code in text):
                 chats.append(cid)
                 send(token, cid, WELCOME)
-                print("נוסף מנוי:", who)
+                print("נוסף מנוי")
             else:
                 send(token, cid, "🔒 הבוט פרטי. כדי להצטרף צריך את קישור ההצטרפות מבעל הבוט.")
 
@@ -192,6 +200,53 @@ def send(token, chat, text, silent=False):
     except Exception as e:  # noqa: BLE001
         print("! שליחה לטלגרם נכשלה:", e)
         return False
+
+
+# ---------- שמירת מצב מוצפנת ----------
+
+def _key(token):
+    return hashlib.sha256(("mesirot-state:" + token).encode()).digest()
+
+
+def _stream(key, nonce, n):
+    out, i = b"", 0
+    while len(out) < n:
+        out += hashlib.sha256(key + nonce + i.to_bytes(8, "big")).digest()
+        i += 1
+    return out[:n]
+
+
+def load_state(token):
+    if os.path.exists(STATE_ENC) and token:
+        raw = base64.b64decode(open(STATE_ENC).read())
+        nonce, mac, ct = raw[:16], raw[16:48], raw[48:]
+        key = _key(token)
+        if not hmac.compare_digest(mac, hmac.new(key, nonce + ct, "sha256").digest()):
+            print("! לא הצלחתי לפתוח את המצב השמור (מפתח הבוט הוחלף?) — מתחילים מחדש")
+            return {}
+        pt = bytes(a ^ b for a, b in zip(ct, _stream(key, nonce, len(ct))))
+        return json.loads(pt.decode("utf-8"))
+    if os.path.exists(STATE):
+        return json.load(open(STATE, encoding="utf-8"))
+    return {}
+
+
+def save_state(token, state):
+    data = json.dumps(state, ensure_ascii=False).encode("utf-8")
+    if not token:
+        return
+    key, nonce = _key(token), os.urandom(16)
+    ct = bytes(a ^ b for a, b in zip(data, _stream(key, nonce, len(data))))
+    mac = hmac.new(key, nonce + ct, "sha256").digest()
+    with open(STATE_ENC, "w") as f:
+        f.write(base64.b64encode(nonce + mac + ct).decode())
+    if os.path.exists(STATE):
+        os.remove(STATE)
+
+
+def join_code(token):
+    """קוד ההצטרפות נגזר מהמפתח של הבוט, כך שהוא לא כתוב בשום קובץ."""
+    return hashlib.sha256(("mesirot-join:" + token).encode()).hexdigest()[:12]
 
 
 # ---------- ריצה ----------
@@ -208,11 +263,10 @@ def is_deal(cfg, it, text):
 
 def main():
     cfg = json.load(open(CONFIG, encoding="utf-8"))
-    state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
+    token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    state = load_state(token)
     seen = state.get("seen", [])
     seen_set = set(seen)
-
-    token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     chats = state.setdefault("chats", [])
     if state.get("chat_id") and state["chat_id"] not in chats:
         chats.append(state.pop("chat_id"))
@@ -222,12 +276,13 @@ def main():
     if not token:
         print("חסר TELEGRAM_TOKEN (Settings ← Secrets and variables ← Actions). לא שולח כלום.")
     else:
+        me = {}
         try:
             me = tg(token, "getMe").get("result", {})
             print(f"הבוט המחובר: @{me.get('username')} · מנויים: {len(chats)}")
         except Exception as e:  # noqa: BLE001
             print("! המפתח של הבוט לא תקין:", e)
-        update_chats(token, state, cfg.get("join_code", ""))
+        update_chats(token, state, join_code(token), me.get("username", ""))
         print(f"מנויים אחרי עדכון: {len(chats)}")
     chat = bool(chats)
 
@@ -300,8 +355,7 @@ def main():
 
     state["seen"] = seen[-5000:]
     state["last_run"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-    with open(STATE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=1)
+    save_state(token, state)
     print(f"נשלחו {sent} התראות.")
 
 
